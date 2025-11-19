@@ -1,0 +1,21 @@
+{
+  "node": "n8n-nodes-ncp.NcpApi",
+  "nodeVersion": "1.0",
+  "codexVersion": "1.0",
+  "categories": [
+    "Developer Tools",
+    "Network"
+  ],
+  "resources": {
+    "credentialDocumentation": [
+      {
+        "url": ""
+      }
+    ],
+    "primaryDocumentation": [
+      {
+        "url": ""
+      }
+    ]
+  }
+}

@@ -14,7 +14,7 @@ import { createHmac } from 'crypto';
 
 function createNcpSignature(
 	method: IHttpRequestMethods,
-	path: string,
+	pathWithQuery: string,
 	timestamp: string,
 	accessKey: string,
 	secretKey: string,
@@ -22,7 +22,7 @@ function createNcpSignature(
 	const space = ' ';
 	const newLine = '\n';
 
-	const message: BinaryLike = `${method}${space}${path}${newLine}${timestamp}${newLine}${accessKey}`;
+	const message: BinaryLike = `${method}${space}${pathWithQuery}${newLine}${timestamp}${newLine}${accessKey}`;
 
 	return createHmac('sha256', secretKey).update(message).digest('base64');
 }
@@ -98,9 +98,9 @@ export class NcpApi implements INodeType {
 				displayName: 'Path',
 				name: 'path',
 				type: 'string',
-				default: '',
+				default: '/vserver/v2/getRegionList?responseFormatType=json',
 				required: true,
-				description: '쿼리스트링이 포함된 전체 Path를 넣어도 됩니다 (예: /vserver/v2/getRegionList?responseFormatType=JSON)',
+				description: '요청 경로: 쿼리스트링이 포함된 전체 Path를 넣을 수 있습니다 (예: /vserver/v2/getRegionList?responseFormatType=JSON)',
 			},
 			{
 				displayName: 'HTTP Method',
@@ -127,7 +127,6 @@ export class NcpApi implements INodeType {
 				typeOptions: {
 					multipleValues: true,
 				},
-				// 기본으로 responseFormatType=json 하나 넣어둬도 편함
 				default: {
 					params: [
 						{
@@ -164,7 +163,8 @@ export class NcpApi implements INodeType {
 				name: 'sendBody',
 				type: 'boolean',
 				default: false,
-				description: 'Whether to include a JSON body in the request (주로 POST/PUT/PATCH 요청에 사용)',
+				description:
+					'Whether to include a JSON body in the request (주로 POST/PUT/PATCH 요청에 사용)',
 			},
 			{
 				displayName: 'Body (JSON)',
@@ -176,7 +176,7 @@ export class NcpApi implements INodeType {
 						sendBody: [true],
 					},
 				},
-				description: '요청에 포함할 Raw JSON body',
+				description: 'Raw JSON body to send with the request',
 			},
 		],
 	};
@@ -194,40 +194,58 @@ export class NcpApi implements INodeType {
 						? (this.getNodeParameter('customBaseUrl', i) as string)
 						: baseUrlParam;
 
-				// --- Path + 쿼리스트링 분리 ---
-				const rawPath = this.getNodeParameter('path', i) as string;
-				let purePath = rawPath;
-				const qs: IDataObject = {};
+				if (!baseUrl) {
+					throw new NodeApiError(this.getNode(), {
+						message: 'Base URL is required',
+					});
+				}
 
-				if (rawPath.includes('?')) {
-					const [pathOnly, queryString] = rawPath.split('?', 2);
-					purePath = pathOnly || '/';
+				// --- Path + 쿼리스트링 처리 ---
+				const rawPathParam = this.getNodeParameter('path', i) as string;
+
+				if (!rawPathParam || !rawPathParam.startsWith('/')) {
+					throw new NodeApiError(this.getNode(), {
+						message: 'Path must start with "/"',
+					});
+				}
+
+				let basePath = rawPathParam;
+				let searchParams = new URLSearchParams();
+
+				if (rawPathParam.includes('?')) {
+					const [pathOnly, queryString] = rawPathParam.split('?', 2);
+					basePath = pathOnly || '/';
 
 					if (queryString) {
-						const sp = new URLSearchParams(queryString);
-						for (const [key, value] of sp.entries()) {
-							qs[key] = value;
+						searchParams = new URLSearchParams(queryString);
+					}
+				}
+
+				// fixedCollection Query → URLSearchParams에 merge (직접 입력이 우선)
+				const queryCollection = this.getNodeParameter('query', i, {}) as {
+					params?: IDataObject[];
+				};
+
+				if (queryCollection.params && Array.isArray(queryCollection.params)) {
+					for (const param of queryCollection.params) {
+						const name = param.name as string;
+						const value = param.value as string;
+						if (name) {
+							searchParams.set(name, value);
 						}
 					}
 				}
+
+				const queryStringFinal = searchParams.toString();
+				const pathWithQuery =
+					queryStringFinal.length > 0
+						? `${basePath}?${queryStringFinal}`
+						: basePath;
 
 				const method = this.getNodeParameter('method', i) as IHttpRequestMethods;
 
 				const sendBody = this.getNodeParameter('sendBody', i, false) as boolean;
 				const bodyJson = this.getNodeParameter('bodyJson', i, '{}') as string;
-
-				// fixedCollection Query → qs에 merge (직접 입력이 우선)
-				const queryCollection = this.getNodeParameter('query', i, {}) as IDataObject;
-
-				if (queryCollection && Array.isArray(queryCollection.params)) {
-					for (const param of queryCollection.params as IDataObject[]) {
-						const name = param.name as string;
-						const value = param.value as string;
-						if (name) {
-							qs[name] = value;
-						}
-					}
-				}
 
 				// NCP API credentials
 				const credentials = (await this.getCredentials('ncpApi')) as {
@@ -238,7 +256,7 @@ export class NcpApi implements INodeType {
 				const timestamp = Date.now().toString();
 				const signature = createNcpSignature(
 					method,
-					purePath,
+					pathWithQuery,
 					timestamp,
 					credentials.accessKey,
 					credentials.secretKey,
@@ -253,9 +271,8 @@ export class NcpApi implements INodeType {
 
 				const requestOptions: IHttpRequestOptions = {
 					method,
-					url: `${baseUrl}${purePath}`,
+					url: `${baseUrl}${pathWithQuery}`,
 					headers,
-					qs,
 					json: true,
 				};
 

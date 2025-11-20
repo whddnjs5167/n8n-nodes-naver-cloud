@@ -16,7 +16,7 @@ export class NcpApi implements ICredentialType {
 	test: ICredentialTestRequest = {
 		request: {
 			method: 'GET',
-			baseURL: 'https://ncloud.apigw.ntruss.com/vserver/v2/getServerInstanceList',
+			baseURL: 'https://www.naver.com',
 			url: '/',
 		},
 	};

@@ -12,11 +12,11 @@ export class NcpApi implements ICredentialType {
 
 	icon: Icon = { light: 'file:../icons/github.svg', dark: 'file:../icons/github.dark.svg' };
 
-	// ✔ Credential 테스트 (필수)
+	// ✔ Credential 테스트 (필수) Credential 등록할 때 N8N에서 테스트로 호출하는 용도
 	test: ICredentialTestRequest = {
 		request: {
 			method: 'GET',
-			baseURL: 'https://ncloud.apigw.ntruss.com',
+			baseURL: 'https://ncloud.apigw.ntruss.com/vserver/v2/getServerInstanceList',
 			url: '/',
 		},
 	};
@@ -28,7 +28,7 @@ export class NcpApi implements ICredentialType {
 			type: 'string',
 			default: '',
 			required: true,
-			placeholder: 'e.g. 4zS2Jt... (NCP API Access Key)',
+			placeholder: 'e.g. ncp_iam_A1B2... (NCP API Access Key)',
 		},
 		{
 			displayName: 'Secret Key',
@@ -39,7 +39,7 @@ export class NcpApi implements ICredentialType {
 			},
 			default: '',
 			required: true,
-			placeholder: 'e.g. KtshDM... (NCP API Secret Key)',
+			placeholder: 'e.g. ncp_iam_A1B2.... (NCP API Secret Key)',
 		},
 	];
 }

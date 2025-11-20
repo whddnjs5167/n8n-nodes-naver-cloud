@@ -9,7 +9,6 @@ import type {
 } from 'n8n-workflow';
 import { NodeApiError } from 'n8n-workflow';
 
-// Node.js built-in crypto (외부 dependency 아님 → n8n Cloud OK)
 import type { BinaryLike } from 'crypto';
 import { createHmac } from 'crypto';
 
@@ -39,67 +38,80 @@ export class NcpApi implements INodeType {
 		defaults: {
 			name: 'NCP API',
 		},
-		// 🔥 tool로 사용 가능
 		usableAsTool: true,
-
-		// ❗ 여기서 더 이상 NodeConnectionType 안 씀
 		inputs: ['main'],
 		outputs: ['main'],
 
 		credentials: [
 			{
-				// credentials 파일에서 정의할 이름과 동일해야 함
 				name: 'ncpApi',
 				required: true,
 			},
 		],
 
 		properties: [
-			// ---- 공통 설정 ----
+			// ---- Base URL 선택 (민간/공공/금융/Custom) ----
 			{
-				displayName: 'Base URL',
+				displayName: 'API Gateway',
 				name: 'baseUrl',
-				type: 'string',
+				type: 'options',
 				default: 'https://ncloud.apigw.ntruss.com',
-				required: true,
-				description:
-					'NCP API Gateway base URL (예: https://ncloud.apigw.ntruss.com)',
+				options: [
+					{
+						name: 'NCP (민간)',
+						value: 'https://ncloud.apigw.ntruss.com',
+						description: '민간존 API Gateway',
+					},
+					{
+						name: 'NCP (공공)',
+						value: 'https://ncloud.apigw.gov-ntruss.com',
+						description: '공공존(gov) API Gateway',
+					},
+					{
+						name: 'NCP (금융)',
+						value: 'https://fin-ncloud.apigw.fin-ntruss.com',
+						description: '금융존(Financial) API Gateway',
+					},
+					{
+						name: 'Custom (직접 입력)',
+						value: 'custom',
+						description: '직접 API Gateway URL 입력',
+					},
+				],
+				description: 'NCP API Gateway endpoint를 선택합니다',
 			},
+			{
+				displayName: 'Custom Base URL',
+				name: 'customBaseUrl',
+				type: 'string',
+				default: '',
+				placeholder: 'https://example.apigw.ntruss.com',
+				displayOptions: {
+					show: {
+						baseUrl: ['custom'],
+					},
+				},
+				description: 'Custom을 선택했을 때 사용할 API Gateway URL',
+			},
+
 			{
 				displayName: 'Path',
 				name: 'path',
 				type: 'string',
-				default: '/server/v2/getServerInstanceList',
+				default: '',
 				required: true,
-				description:
-					'Request path starting with / (쿼리스트링 제외, 예: /server/v2/getServerInstanceList)',
+				description: '쿼리스트링이 포함된 전체 Path를 넣어도 됩니다 (예: /vserver/v2/getRegionList?responseFormatType=JSON)',
 			},
 			{
 				displayName: 'HTTP Method',
 				name: 'method',
 				type: 'options',
 				options: [
-					// 이름(name) 기준 알파벳 순서: DELETE | GET | PATCH | POST | PUT
-					{
-						name: 'DELETE',
-						value: 'DELETE',
-					},
-					{
-						name: 'GET',
-						value: 'GET',
-					},
-					{
-						name: 'PATCH',
-						value: 'PATCH',
-					},
-					{
-						name: 'POST',
-						value: 'POST',
-					},
-					{
-						name: 'PUT',
-						value: 'PUT',
-					},
+					{ name: 'DELETE', value: 'DELETE' },
+					{ name: 'GET', value: 'GET' },
+					{ name: 'PATCH', value: 'PATCH' },
+					{ name: 'POST', value: 'POST' },
+					{ name: 'PUT', value: 'PUT' },
 				],
 				default: 'GET',
 				required: true,
@@ -115,7 +127,15 @@ export class NcpApi implements INodeType {
 				typeOptions: {
 					multipleValues: true,
 				},
-				default: {},
+				// 기본으로 responseFormatType=json 하나 넣어둬도 편함
+				default: {
+					params: [
+						{
+							name: 'responseFormatType',
+							value: 'json',
+						},
+					],
+				},
 				options: [
 					{
 						name: 'params',
@@ -144,7 +164,7 @@ export class NcpApi implements INodeType {
 				name: 'sendBody',
 				type: 'boolean',
 				default: false,
-				description: 'Whether to send a JSON body (POST/PUT/PATCH일 때 주로 사용)',
+				description: 'Whether to include a JSON body in the request (주로 POST/PUT/PATCH 요청에 사용)',
 			},
 			{
 				displayName: 'Body (JSON)',
@@ -156,7 +176,7 @@ export class NcpApi implements INodeType {
 						sendBody: [true],
 					},
 				},
-				description: 'Raw JSON body to send with the request',
+				description: '요청에 포함할 Raw JSON body',
 			},
 		],
 	};
@@ -167,16 +187,37 @@ export class NcpApi implements INodeType {
 
 		for (let i = 0; i < items.length; i++) {
 			try {
-				const baseUrl = this.getNodeParameter('baseUrl', i) as string;
-				const path = this.getNodeParameter('path', i) as string;
+				// --- Base URL 처리 (민간/공공/금융/Custom) ---
+				const baseUrlParam = this.getNodeParameter('baseUrl', i) as string;
+				const baseUrl =
+					baseUrlParam === 'custom'
+						? (this.getNodeParameter('customBaseUrl', i) as string)
+						: baseUrlParam;
+
+				// --- Path + 쿼리스트링 분리 ---
+				const rawPath = this.getNodeParameter('path', i) as string;
+				let purePath = rawPath;
+				const qs: IDataObject = {};
+
+				if (rawPath.includes('?')) {
+					const [pathOnly, queryString] = rawPath.split('?', 2);
+					purePath = pathOnly || '/';
+
+					if (queryString) {
+						const sp = new URLSearchParams(queryString);
+						for (const [key, value] of sp.entries()) {
+							qs[key] = value;
+						}
+					}
+				}
+
 				const method = this.getNodeParameter('method', i) as IHttpRequestMethods;
 
 				const sendBody = this.getNodeParameter('sendBody', i, false) as boolean;
 				const bodyJson = this.getNodeParameter('bodyJson', i, '{}') as string;
 
-				// 쿼리 파라미터 fixedCollection → object 로 변환
+				// fixedCollection Query → qs에 merge (직접 입력이 우선)
 				const queryCollection = this.getNodeParameter('query', i, {}) as IDataObject;
-				const qs: IDataObject = {};
 
 				if (queryCollection && Array.isArray(queryCollection.params)) {
 					for (const param of queryCollection.params as IDataObject[]) {
@@ -197,7 +238,7 @@ export class NcpApi implements INodeType {
 				const timestamp = Date.now().toString();
 				const signature = createNcpSignature(
 					method,
-					path,
+					purePath,
 					timestamp,
 					credentials.accessKey,
 					credentials.secretKey,
@@ -212,7 +253,7 @@ export class NcpApi implements INodeType {
 
 				const requestOptions: IHttpRequestOptions = {
 					method,
-					url: `${baseUrl}${path}`,
+					url: `${baseUrl}${purePath}`,
 					headers,
 					qs,
 					json: true,

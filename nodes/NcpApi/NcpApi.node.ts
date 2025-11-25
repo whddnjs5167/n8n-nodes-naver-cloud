@@ -98,7 +98,7 @@ export class NcpApi implements INodeType {
 				displayName: 'Path',
 				name: 'path',
 				type: 'string',
-				default: '/vserver/v2/getRegionList?responseFormatType=json',
+				default: '',
 				required: true,
 				description: '요청 경로: 쿼리스트링이 포함된 전체 Path를 넣을 수 있습니다 (예: /vserver/v2/getRegionList?responseFormatType=JSON)',
 			},
@@ -182,118 +182,126 @@ export class NcpApi implements INodeType {
 	};
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
-		const items = this.getInputData();
-		const returnItems: INodeExecutionData[] = [];
+	const items = this.getInputData();
+	const returnItems: INodeExecutionData[] = [];
 
-		for (let i = 0; i < items.length; i++) {
-			try {
-				// --- Base URL 처리 (민간/공공/금융/Custom) ---
-				const baseUrlParam = this.getNodeParameter('baseUrl', i) as string;
-				const baseUrl =
-					baseUrlParam === 'custom'
-						? (this.getNodeParameter('customBaseUrl', i) as string)
-						: baseUrlParam;
+	for (let i = 0; i < items.length; i++) {
 
-				if (!baseUrl) {
-					throw new NodeApiError(this.getNode(), {
-						message: 'Base URL is required',
-					});
-				}
+		// 🔹 에러에서 쓸 디버그용 URL
+		let debugRequestUrl = '';
 
-				// --- Path + 쿼리스트링 처리 ---
-				const rawPathParam = this.getNodeParameter('path', i) as string;
+		try {
+			// --- Base URL 처리 ---
+			const baseUrlParam = this.getNodeParameter('baseUrl', i) as string;
+			const baseUrl =
+				baseUrlParam === 'custom'
+					? (this.getNodeParameter('customBaseUrl', i) as string)
+					: baseUrlParam;
 
-				if (!rawPathParam || !rawPathParam.startsWith('/')) {
-					throw new NodeApiError(this.getNode(), {
-						message: 'Path must start with "/"',
-					});
-				}
-
-				let basePath = rawPathParam;
-				let searchParams = new URLSearchParams();
-
-				if (rawPathParam.includes('?')) {
-					const [pathOnly, queryString] = rawPathParam.split('?', 2);
-					basePath = pathOnly || '/';
-
-					if (queryString) {
-						searchParams = new URLSearchParams(queryString);
-					}
-				}
-
-				// fixedCollection Query → URLSearchParams에 merge (직접 입력이 우선)
-				const queryCollection = this.getNodeParameter('query', i, {}) as {
-					params?: IDataObject[];
-				};
-
-				if (queryCollection.params && Array.isArray(queryCollection.params)) {
-					for (const param of queryCollection.params) {
-						const name = param.name as string;
-						const value = param.value as string;
-						if (name) {
-							searchParams.set(name, value);
-						}
-					}
-				}
-
-				const queryStringFinal = searchParams.toString();
-				const pathWithQuery =
-					queryStringFinal.length > 0
-						? `${basePath}?${queryStringFinal}`
-						: basePath;
-
-				const method = this.getNodeParameter('method', i) as IHttpRequestMethods;
-
-				const sendBody = this.getNodeParameter('sendBody', i, false) as boolean;
-				const bodyJson = this.getNodeParameter('bodyJson', i, '{}') as string;
-
-				// NCP API credentials
-				const credentials = (await this.getCredentials('ncpApi')) as {
-					accessKey: string;
-					secretKey: string;
-				};
-
-				const timestamp = Date.now().toString();
-				const signature = createNcpSignature(
-					method,
-					pathWithQuery,
-					timestamp,
-					credentials.accessKey,
-					credentials.secretKey,
-				);
-
-				const headers: IDataObject = {
-					'x-ncp-apigw-timestamp': timestamp,
-					'x-ncp-iam-access-key': credentials.accessKey,
-					'x-ncp-apigw-signature-v2': signature,
-					'Content-Type': 'application/json',
-				};
-
-				const requestOptions: IHttpRequestOptions = {
-					method,
-					url: `${baseUrl}${pathWithQuery}`,
-					headers,
-					json: true,
-				};
-
-				if (sendBody) {
-					let bodyData: IDataObject = {};
-					if (typeof bodyJson === 'string' && bodyJson.trim() !== '') {
-						bodyData = JSON.parse(bodyJson) as IDataObject;
-					}
-					requestOptions.body = bodyData;
-				}
-
-				const responseData = await this.helpers.httpRequest(requestOptions);
-
-				returnItems.push({
-					json: responseData as IDataObject,
+			if (!baseUrl) {
+				throw new NodeApiError(this.getNode(), {
+					message: 'Base URL is required',
 				});
-			} catch (error) {
-				throw new NodeApiError(this.getNode(), error);
 			}
-		}
 
-		return [returnItems];
+			// --- Path + 쿼리스트링 처리 ---
+			const rawPathParam = this.getNodeParameter('path', i) as string;
+
+			if (!rawPathParam || !rawPathParam.startsWith('/')) {
+				throw new NodeApiError(this.getNode(), {
+					message: 'Path must start with "/"',
+				});
+			}
+
+			let basePath = rawPathParam;
+			let searchParams = new URLSearchParams();
+
+			if (rawPathParam.includes('?')) {
+				const [pathOnly, queryString] = rawPathParam.split('?', 2);
+				basePath = pathOnly || '/';
+
+				if (queryString) {
+					searchParams = new URLSearchParams(queryString);
+				}
+			}
+
+			const queryCollection = this.getNodeParameter('query', i, {}) as {
+				params?: IDataObject[];
+			};
+
+			if (queryCollection.params && Array.isArray(queryCollection.params)) {
+				for (const param of queryCollection.params) {
+					const name = param.name as string;
+					const value = param.value as string;
+					if (name) {
+						searchParams.set(name, value);
+					}
+				}
+			}
+
+			const queryStringFinal = searchParams.toString();
+			const pathWithQuery =
+				queryStringFinal.length > 0
+					? `${basePath}?${queryStringFinal}`
+					: basePath;
+
+			// 🔹 여기서 실제 요청 URL을 문자열로 저장
+			debugRequestUrl = `${baseUrl}${pathWithQuery}`;
+
+			const method = this.getNodeParameter('method', i) as IHttpRequestMethods;
+			const sendBody = this.getNodeParameter('sendBody', i, false) as boolean;
+			const bodyJson = this.getNodeParameter('bodyJson', i, '{}') as string;
+
+			const credentials = (await this.getCredentials('ncpApi')) as {
+				accessKey: string;
+				secretKey: string;
+			};
+
+			const timestamp = Date.now().toString();
+			const signature = createNcpSignature(
+				method,
+				pathWithQuery,
+				timestamp,
+				credentials.accessKey,
+				credentials.secretKey,
+			);
+
+			const headers: IDataObject = {
+				'x-ncp-apigw-timestamp': timestamp,
+				'x-ncp-iam-access-key': credentials.accessKey,
+				'x-ncp-apigw-signature-v2': signature,
+				'Content-Type': 'application/json',
+			};
+
+			const requestOptions: IHttpRequestOptions = {
+				method,
+				url: debugRequestUrl,           // ← 여기도 그대로 사용
+				headers,
+				json: true,
+			};
+
+			if (sendBody) {
+				let bodyData: IDataObject = {};
+				if (typeof bodyJson === 'string' && bodyJson.trim() !== '') {
+					bodyData = JSON.parse(bodyJson) as IDataObject;
+				}
+				requestOptions.body = bodyData;
+			}
+
+			const responseData = await this.helpers.httpRequest(requestOptions);
+
+			returnItems.push({
+				json: responseData as IDataObject,
+			});
+		} catch (error) {
+			// 🔹 에러 팝업에 URL까지 같이 보여주기
+			throw new NodeApiError(this.getNode(), error, {
+				description: `Request URL: ${debugRequestUrl || 'URL not built'}`,
+			});
+		}
+	}
+
+	return [returnItems];
+
 	}
 }

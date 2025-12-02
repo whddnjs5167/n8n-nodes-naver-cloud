@@ -226,15 +226,23 @@ export class NcpApi implements INodeType {
 			}
 
 			const queryCollection = this.getNodeParameter('query', i, {}) as {
-				params?: IDataObject[];
+	params?: IDataObject[];
 			};
 
 			if (queryCollection.params && Array.isArray(queryCollection.params)) {
 				for (const param of queryCollection.params) {
 					const name = param.name as string;
-					const value = param.value as string;
-					if (name) {
-						searchParams.set(name, value);
+					const rawValue = param.value as string | null | undefined;
+
+					// 🔹 name 이 있고, value 가 null/undefined 가 아니면만 추가
+					//   (원하면 '' 도 제외 가능)
+					if (
+						name &&
+						rawValue !== null &&
+						rawValue !== undefined &&
+						rawValue !== ''
+					) {
+						searchParams.set(name, String(rawValue));
 					}
 				}
 			}
